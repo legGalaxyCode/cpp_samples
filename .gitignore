@@ -1,3 +1,10 @@
+# Debug files
+build
+.idea
+cmake-build-debug
+.vscode
+third_party/*
+
 # Prerequisites
 *.d
 
