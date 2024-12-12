@@ -10,18 +10,26 @@
 namespace my_std {
 namespace internal {
 
+constexpr unsigned kCacheLineSize = 64;
+
 template <typename T>
 struct ControlBlockBase {
     using counter_t = std::atomic<uint32_t>;
 
-    alignas(64) counter_t shared_cnt = 0;
-    alignas(64) counter_t weak_cnt   = 0;
+    alignas(kCacheLineSize) counter_t shared_cnt = 0;
+    alignas(kCacheLineSize) counter_t weak_cnt   = 0;
     
     virtual const T* getPtr() const = 0;
     virtual T* getPtr() = 0;
     virtual void destroy() = 0;
     // TODO: rename this
     virtual void detach() = 0;
+
+    virtual ~ControlBlockBase() = default;
+    ControlBlockBase(const ControlBlockBase&) = default;
+    ControlBlockBase(ControlBlockBase&&) = default;
+    ControlBlockBase& operator=(const ControlBlockBase&) = default;
+    ControlBlockBase& operator=(ControlBlockBase&&) = default;
 };
 
 template <typename T>
@@ -65,12 +73,10 @@ public:
     template <typename U>
     friend class WeakPtr;
 
-    constexpr SharedPtr() noexcept {
-        std::cout << "init\n";
-    }
+    constexpr SharedPtr() noexcept = default;
+
     SharedPtr(T* raw_pointer): data_{raw_pointer}, cblock_{new internal::ControlBlock{raw_pointer}} {
         // To deallocate memory once if weak_ptr is still exists when shared is dead
-        //cblock_->data_ = data_;
         cblock_->shared_cnt++;
     }
 
@@ -88,6 +94,15 @@ public:
 
     SharedPtr(const SharedPtr& ptr) noexcept: data_{ptr.data_}, cblock_{ptr.cblock_} {
         cblock_->shared_cnt++;
+    }
+
+    // TODO: implement swap idiom
+    SharedPtr& operator=(const SharedPtr& ptr) noexcept {
+        data_ = ptr.data_;
+        cblock_ = ptr.cblock_;
+        cblock_->shared_cnt++;
+
+        return *this;
     }
 
     template <typename Y>
@@ -109,23 +124,26 @@ public:
         cblock_ = std::exchange(ptr.cblock_, nullptr);
     }
 
+    SharedPtr& operator=(SharedPtr&& ptr) noexcept {
+        data_ = std::exchange(ptr.data_, nullptr);
+        cblock_ = std::exchange(ptr.cblock_, nullptr);
+
+        return *this;
+    }
+
     T* operator->() noexcept { return data_; }
     const T* operator->() const noexcept { return data_; }
 
     T& operator*() noexcept { return *data_; }
     const T& operator*() const noexcept { return *data_; }
 
-    template <typename T1 = T, std::enable_if_t<std::is_array_v<T1>, bool> = true>
-    T1& operator[](std::ptrdiff_t idx) const {
-        return data_[idx];
-    }
     operator bool() const noexcept { return !empty(); }
 
     T*   get() noexcept { return data_; }
     const T* get() const noexcept { return data_; }
 
-    bool empty() const noexcept { return data_ == nullptr; }
-    uint32_t getUseCount() const noexcept {
+    [[nodiscard]] bool empty() const noexcept { return data_ == nullptr; }
+    [[nodiscard]] uint32_t getUseCount() const noexcept {
         auto val = empty() ? 0 : cblock_->shared_cnt.load();
         return val;
     }
@@ -136,7 +154,7 @@ private:
             return;
         }
         auto prev_value = std::atomic_fetch_sub(&cblock_->shared_cnt, 1);
-        std::cout << prev_value << '\n';
+        //std::cout << prev_value << '\n';
         // Case 1. Another shared_ptr should delete data_
         if (prev_value != 1) {
             return;
@@ -153,11 +171,10 @@ private:
             data_ = nullptr;
         }
     }
-    
 
     // TODO: add tag here
     template <typename... Args>
-    SharedPtr(Args&&... args): data_{}, cblock_(new internal::ControlBlockAllocHint<T>(internal::cblock_tag_alloc_hint{}, std::forward<Args>(args)...)) {
+    SharedPtr(Args&&... args): cblock_(new internal::ControlBlockAllocHint<T>(internal::cblock_tag_alloc_hint{}, std::forward<Args>(args)...)) {
         data_ = cblock_->getPtr();
         cblock_->shared_cnt++;
     }
@@ -171,6 +188,7 @@ SharedPtr<T> make_shared(Args&&... args) {
     return SharedPtr<T>(std::forward<Args>(args)...);
 }
 
+/*
 template <typename T>
 class WeakPtr {
 public:
@@ -178,5 +196,6 @@ public:
 private:
     internal::ControlBlockBase* cblock_ = nullptr;
 };
+*/
 
 }

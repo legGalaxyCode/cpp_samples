@@ -1,5 +1,6 @@
 #include <typeinfo>
 #include <type_traits>
+#include <cstdint>
 
 namespace internal {
 
